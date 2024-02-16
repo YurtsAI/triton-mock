@@ -1,5 +1,7 @@
 FROM rust:1.75 AS builder
 
+LABEL org.opencontainers.image.source https://github.com/YurtsAI/triton-mock
+
 ARG PROTOBUF_VERSION=3.21.12-3
 ARG LIBPROTOBUF_VERSION=3.21.12-3
 
