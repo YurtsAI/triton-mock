@@ -16,6 +16,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+    - name: Deps
+      run: |
+        export PROTOBUF_VERSION=3.21.12-3
+        export LIBPROTOBUF_VERSION=3.21.12-3
+        apt-get update && apt-get install --no-install-recommends -y protobuf-compiler=${PROTOBUF_VERSION} libprotobuf-dev=${LIBPROTOBUF_VERSION}
     - name: Build
       run: cargo build --verbose
     - name: Run tests
