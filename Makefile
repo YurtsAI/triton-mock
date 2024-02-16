@@ -45,4 +45,8 @@ install-deps:
 	brew install protobuf
 
 release:
-	cargo release $(RELEASE) $(EXECUTE)
+ifeq ($(EXECUTE),)
+	cargo release --no-publish $(RELEASE)
+else
+	cargo release --execute --no-publish $(RELEASE)
+endif
