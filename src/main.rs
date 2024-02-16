@@ -545,6 +545,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut client_map = ClientMap::new();
     let cli_options = CliOptions::parse();
 
+    let pid = std::process::id();
+    let pid_fname = "/tmp/triton-mock-server.pid";
+
+    std::fs::write(pid_fname, format!("{}", pid))?;
+
     let recorded_streams = if cli_options.record {
         let mut recorded_streams = RecordedStreams::default();
         for (models, port) in CLIENT_PORTS {
