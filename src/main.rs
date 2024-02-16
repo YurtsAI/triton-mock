@@ -528,10 +528,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         GRPC_CLIENT.set(client_map).unwrap();
         recorded_streams
     } else {
-        let recorded_streams =
-            std::fs::read_to_string(format!("recorded_streams_{}.json", cli_options.suffix))
-                .unwrap();
-        serde_json::from_str(&recorded_streams).unwrap()
+        let fname = format!("recorded_streams_{}.json.gz", cli_options.suffix);
+        let fin = std::fs::File::open(fname).unwrap();
+        let fin_gz = flate2::read::GzDecoder::new(fin);
+        serde_json::from_reader(fin_gz).unwrap()
     };
 
     let mut join_set = tokio::task::JoinSet::new();
@@ -558,12 +558,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     if cli_options.record {
         let recorded_streams = recorded_streams.lock().await;
-        let json = serde_json::to_string(&*recorded_streams).unwrap();
-        std::fs::write(
-            format!("recorded_streams_{}.json", cli_options.suffix),
-            json,
-        )
-        .unwrap();
+        let fname = format!("recorded_streams_{}.json.gz", cli_options.suffix);
+        let fout = std::fs::File::create(fname).unwrap();
+        let fout_gz = flate2::write::GzEncoder::new(fout, flate2::Compression::default());
+        serde_json::to_writer(fout_gz, &*recorded_streams).unwrap();
     }
 
     Ok(())
