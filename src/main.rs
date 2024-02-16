@@ -7,19 +7,51 @@ use server::{
     grpc_inference_service_server::{GrpcInferenceService, GrpcInferenceServiceServer},
 };
 
-use std::{collections::HashMap, error::Error, pin::Pin, sync::OnceLock};
+use std::{
+    collections::{BTreeMap, HashMap},
+    error::Error,
+    pin::Pin,
+    sync::{Arc, OnceLock},
+};
+
 use tonic::{
     transport::{Channel, Server},
     Status,
 };
 
+use tokio::sync::Mutex;
+
 use tokio_stream::Stream;
 
-#[derive(Debug, Default)]
-struct MockInferenceService {}
+#[derive(serde::Deserialize, serde::Serialize, Default, Debug)]
+struct RecordedStream {
+    model_config: BTreeMap<String, Vec<String>>,
+    model_infer: BTreeMap<String, Vec<String>>,
+    model_stream_infer: BTreeMap<String, Vec<String>>,
+    #[serde(skip)]
+    model_stream_infer_inputs: Vec<String>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Default, Debug)]
+struct RecordedStreams {
+    model_map: BTreeMap<String, RecordedStream>,
+}
 
 type ResponseStream =
     Pin<Box<dyn Stream<Item = Result<server::ModelStreamInferResponse, Status>> + Send>>;
+
+type ClientMap = HashMap<String, Mutex<GrpcInferenceServiceClient<Channel>>>;
+
+#[derive(Debug, Default)]
+struct MockInferenceService {
+    recorded_streams: Arc<Mutex<RecordedStreams>>,
+}
+
+impl MockInferenceService {
+    fn new_with(recorded_streams: Arc<Mutex<RecordedStreams>>) -> Self {
+        MockInferenceService { recorded_streams }
+    }
+}
 
 const CLIENT_PORTS: &[(&[&str], &str)] = &[
     (
@@ -28,14 +60,13 @@ const CLIENT_PORTS: &[(&[&str], &str)] = &[
             "document_classifier",
             "sentence_embed",
             "ner",
-            "keybert",
         ],
         "8302",
     ),
     (&["ingestor"], "8303"),
-    (&["coreference_resolution"], "8304"),
+    (&["cross_encoder", "coreference_resolution"], "8304"),
     (&["llama_7b"], "8305"),
-    (&["ingestor_vllm"], "8306"),
+    (&["keybert", "ingestor_vllm"], "8306"),
     (&["mistral_7b_instruct"], "8307"),
 ];
 
@@ -52,8 +83,6 @@ const MODELS: &[&str] = &[
     "cross_encoder",
     "llama_7b",
 ];
-
-type ClientMap = HashMap<String, GrpcInferenceServiceClient<Channel>>;
 
 static GRPC_CLIENT: OnceLock<ClientMap> = OnceLock::new();
 
@@ -92,14 +121,6 @@ impl GrpcInferenceService for MockInferenceService {
         }
     }
 
-    async fn model_infer(
-        &self,
-        request: tonic::Request<server::ModelInferRequest>,
-    ) -> std::result::Result<tonic::Response<server::ModelInferResponse>, tonic::Status> {
-        log::warn!("Not implemented: model_infer: {:?}", request);
-        return Err(tonic::Status::unimplemented("model_infer not implemented"));
-    }
-
     async fn server_ready(
         &self,
         _request: tonic::Request<server::ServerReadyRequest>,
@@ -109,30 +130,206 @@ impl GrpcInferenceService for MockInferenceService {
         }))
     }
 
+    async fn model_infer(
+        &self,
+        request: tonic::Request<server::ModelInferRequest>,
+    ) -> std::result::Result<tonic::Response<server::ModelInferResponse>, tonic::Status> {
+        let name = request.get_ref().model_name.to_string();
+        log::info!("model_infer: '{}'", name);
+        if !MODELS.contains(&name.as_ref()) {
+            log::error!(
+                "model_infer: unknown model '{}', request: {:?}",
+                name,
+                request
+            );
+            return Err(tonic::Status::not_found(format!(
+                "model_infer: model not found: {}",
+                name
+            )));
+        }
+        let request = request.into_inner();
+        let json = serde_json::to_string(&request).unwrap();
+        let mut recorded_stream = self.recorded_streams.lock().await;
+        let client_map = GRPC_CLIENT.get();
+        if let Some(client_map) = client_map {
+            let mut client = client_map.get(&name).unwrap().lock().await;
+            let resp = client
+                .model_infer(tonic::Request::new(request))
+                .await
+                .map(|v| {
+                    let v = v.into_inner();
+                    let model_infer = &mut recorded_stream
+                        .model_map
+                        .get_mut(&name)
+                        .unwrap()
+                        .model_infer;
+                    let outputs = model_infer.entry(json).or_insert(vec![]);
+                    outputs.push(serde_json::to_string(&v).unwrap());
+                    tonic::Response::new(v)
+                })
+                .map_err(|e| {
+                    log::error!("model_infer: error: {:?}", e);
+                    e
+                })?;
+            log::debug!("model_infer: resp: {resp:?}");
+            Ok(resp)
+        } else {
+            let model_infer = &mut recorded_stream
+                .model_map
+                .get_mut(&name)
+                .unwrap()
+                .model_infer;
+            let json_resp = model_infer.entry(json).or_default().remove(0);
+            let resp: server::ModelInferResponse = serde_json::from_str(&json_resp).unwrap();
+            Ok(tonic::Response::new(resp))
+        }
+    }
+
     async fn model_config(
         &self,
         request: tonic::Request<server::ModelConfigRequest>,
     ) -> std::result::Result<tonic::Response<server::ModelConfigResponse>, tonic::Status> {
-        let name = &request.get_ref().name.as_ref();
+        let name = request.get_ref().name.to_string();
         log::info!("model_config: '{}'", name);
-        if !MODELS.contains(name) {
+        if !MODELS.contains(&name.as_ref()) {
             log::error!(
                 "model_config: unknown model '{}', request: {:?}",
                 name,
                 request
             );
             return Err(tonic::Status::not_found(format!(
-                "model not found: {}",
+                "model_config: model not found: {}",
                 name
             )));
         }
-        let config = server::ModelConfig {
-            model_transaction_policy: Some(server::ModelTransactionPolicy { decoupled: false }),
-            ..Default::default()
-        };
-        Ok(tonic::Response::new(server::ModelConfigResponse {
-            config: Some(config),
-        }))
+        let request = request.into_inner();
+        let json = serde_json::to_string(&request).unwrap();
+        let mut recorded_stream = self.recorded_streams.lock().await;
+        let client_map = GRPC_CLIENT.get();
+        if let Some(client_map) = client_map {
+            let mut client = client_map.get(&name).unwrap().lock().await;
+            let resp = client
+                .model_config(tonic::Request::new(request))
+                .await
+                .map(|v| {
+                    let v = v.into_inner();
+                    let model_config = &mut recorded_stream
+                        .model_map
+                        .get_mut(&name)
+                        .unwrap()
+                        .model_config;
+                    let outputs = model_config.entry(json).or_insert(vec![]);
+                    outputs.push(serde_json::to_string(&v).unwrap());
+                    tonic::Response::new(v)
+                })
+                .map_err(|e| {
+                    log::error!("model_config: error: {:?}", e);
+                    e
+                })?;
+            log::debug!("model_config: resp: {resp:?}");
+            Ok(resp)
+        } else {
+            let model_config = &mut recorded_stream
+                .model_map
+                .get_mut(&name)
+                .unwrap()
+                .model_config;
+            let resp_json = model_config.entry(json).or_default().remove(0);
+            let resp: server::ModelConfigResponse = serde_json::from_str(&resp_json).unwrap();
+            Ok(tonic::Response::new(resp))
+        }
+    }
+
+    async fn model_stream_infer(
+        &self,
+        request: tonic::Request<tonic::Streaming<server::ModelInferRequest>>,
+    ) -> std::result::Result<tonic::Response<Self::ModelStreamInferStream>, tonic::Status> {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let mut stream = request.into_inner();
+        let (client_tx, client_rx) = tokio::sync::oneshot::channel();
+        let (recs_tx, recs_rx) = tokio::sync::oneshot::channel();
+        let recorded_streams = self.recorded_streams.clone();
+        if let Some(client_map) = GRPC_CLIENT.get() {
+            tokio::spawn(async move {
+                let recorded_streams: Arc<Mutex<RecordedStreams>> = recs_rx.await.unwrap();
+                let mut client_tx = Some(client_tx);
+                while let Some(model_infer_request) = stream.message().await.unwrap() {
+                    if let Some(client_tx) = client_tx.take() {
+                        let model_name = model_infer_request.model_name.to_string();
+                        let client = client_map.get(&model_name).unwrap().lock().await;
+                        client_tx
+                            .send((model_name.to_owned(), Some(client.clone())))
+                            .unwrap();
+                    }
+                    let mut recorded_streams = recorded_streams.lock().await;
+                    let model_map = recorded_streams
+                        .model_map
+                        .get_mut(&model_infer_request.model_name)
+                        .unwrap();
+                    let req_json = serde_json::to_string(&model_infer_request).unwrap();
+                    model_map.model_stream_infer_inputs.push(req_json);
+                    tx.send(model_infer_request).await.unwrap();
+                }
+            });
+        } else {
+            tokio::spawn(async move {
+                let mut client_tx = Some(client_tx);
+                while let Some(model_infer_request) = stream.message().await.unwrap() {
+                    if let Some(client_tx) = client_tx.take() {
+                        let model_name = model_infer_request.model_name.to_string();
+                        client_tx.send((model_name.to_owned(), None)).unwrap();
+                    }
+                    tx.send(model_infer_request).await.unwrap();
+                }
+            });
+        }
+        recs_tx.send(recorded_streams).unwrap();
+        let (model_name, client) = client_rx.await.unwrap();
+        let (tx2, rx2) = tokio::sync::mpsc::channel(4);
+        let recorded_streams = self.recorded_streams.clone();
+        let (recs_tx, recs_rx) = tokio::sync::oneshot::channel();
+        if let Some(mut client) = client {
+            let req_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+            let response = client.model_stream_infer(req_stream).await.unwrap();
+            let mut resp_stream = response.into_inner();
+            tokio::spawn(async move {
+                let recorded_streams: Arc<Mutex<RecordedStreams>> = recs_rx.await.unwrap();
+                while let Some(model_infer_resp) = resp_stream.message().await.unwrap() {
+                    let mut recorded_streams = recorded_streams.lock().await;
+                    let model_map = recorded_streams.model_map.get_mut(&model_name).unwrap();
+                    let req_json = model_map.model_stream_infer_inputs.remove(0);
+                    let json = serde_json::to_string(&model_infer_resp).unwrap();
+                    let outputs = &mut model_map
+                        .model_stream_infer
+                        .entry(req_json)
+                        .or_insert(vec![]);
+                    outputs.push(json);
+                    tx2.send(Ok::<_, tonic::Status>(model_infer_resp))
+                        .await
+                        .unwrap();
+                }
+            });
+        } else {
+            tokio::spawn(async move {
+                let recorded_streams: Arc<Mutex<RecordedStreams>> = recs_rx.await.unwrap();
+                while let Some(model_infer_req) = rx.recv().await {
+                    let mut recorded_streams = recorded_streams.lock().await;
+                    let model_map = recorded_streams.model_map.get_mut(&model_name).unwrap();
+                    let req_json = serde_json::to_string(&model_infer_req).unwrap();
+                    let resp_json = model_map
+                        .model_stream_infer
+                        .get_mut(&req_json)
+                        .unwrap_or(&mut vec![])
+                        .remove(0);
+                    let resp = serde_json::from_str(&resp_json).unwrap();
+                    tx2.send(Ok::<_, tonic::Status>(resp)).await.unwrap();
+                }
+            });
+        }
+        recs_tx.send(recorded_streams).unwrap();
+        Ok(tonic::Response::new(Box::pin(
+            tokio_stream::wrappers::ReceiverStream::new(rx2),
+        )))
     }
 
     async fn log_settings(
@@ -190,16 +387,6 @@ impl GrpcInferenceService for MockInferenceService {
         log::warn!("Not implemented: repository_index: {:?}", request);
         return Err(tonic::Status::unimplemented(
             "repository_index not implemented",
-        ));
-    }
-
-    async fn model_stream_infer(
-        &self,
-        request: tonic::Request<tonic::Streaming<server::ModelInferRequest>>,
-    ) -> std::result::Result<tonic::Response<Self::ModelStreamInferStream>, tonic::Status> {
-        log::warn!("Not implemented: model_stream_infer: {:?}", request);
-        return Err(tonic::Status::unimplemented(
-            "model_stream_infer not implemented",
         ));
     }
 
@@ -307,39 +494,76 @@ impl GrpcInferenceService for MockInferenceService {
     }
 }
 
+#[derive(clap::Parser, Debug)]
+struct CliOptions {
+    #[clap(long)]
+    replay: bool,
+    #[clap(long, default_value = "0")]
+    suffix: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    use clap::Parser;
+
     env_logger::init();
     log::info!("Starting server...");
 
     let mut client_map = ClientMap::new();
+    let cli_options = CliOptions::parse();
 
-    for (models, port) in CLIENT_PORTS {
-        for model in *models {
-            let address = format!("http://0.0.0.0:{}", port);
-            let client = GrpcInferenceServiceClient::connect(address).await?;
-            client_map.insert(model.to_string(), client);
+    let recorded_streams = if !cli_options.replay {
+        let mut recorded_streams = RecordedStreams::default();
+        for (models, port) in CLIENT_PORTS {
+            for model in *models {
+                let address = format!("http://0.0.0.0:{}", port);
+                let client = Mutex::new(GrpcInferenceServiceClient::connect(address).await?);
+                client_map.insert(model.to_string(), client);
+                recorded_streams
+                    .model_map
+                    .insert(model.to_string(), RecordedStream::default());
+            }
         }
-    }
+        GRPC_CLIENT.set(client_map).unwrap();
+        recorded_streams
+    } else {
+        let recorded_streams =
+            std::fs::read_to_string(format!("recorded_streams_{}.json", cli_options.suffix))
+                .unwrap();
+        serde_json::from_str(&recorded_streams).unwrap()
+    };
 
-    GRPC_CLIENT.set(client_map).unwrap();
-
-    let mut set = tokio::task::JoinSet::new();
+    let mut join_set = tokio::task::JoinSet::new();
+    let recorded_streams = Arc::new(Mutex::new(recorded_streams));
 
     for port in SERVER_PORTS {
         let address = format!("0.0.0.0:{}", port).parse().unwrap();
-        let service = MockInferenceService::default();
+        let service = MockInferenceService::new_with(recorded_streams.clone());
         let port = Server::builder()
             .add_service(GrpcInferenceServiceServer::new(service))
-            .serve(address);
-        set.spawn(port);
+            .serve_with_shutdown(address, async {
+                tokio::signal::ctrl_c()
+                    .await
+                    .expect("failed to install CTRL+C signal handler");
+            });
+        join_set.spawn(port);
     }
 
-    while let Some(res) = set.join_next().await {
-        log::warn!("A server has stopped: {:?}", res);
+    if let Some(res) = join_set.join_next().await {
+        log::warn!("Shutdown was signaled: {:?}", res);
     }
 
-    set.abort_all();
+    join_set.abort_all();
+
+    if !cli_options.replay {
+        let recorded_streams = recorded_streams.lock().await;
+        let json = serde_json::to_string(&*recorded_streams).unwrap();
+        std::fs::write(
+            format!("recorded_streams_{}.json", cli_options.suffix),
+            json,
+        )
+        .unwrap();
+    }
 
     Ok(())
 }
