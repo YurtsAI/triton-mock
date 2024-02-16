@@ -18,8 +18,10 @@ FROM debian:bookworm-slim
 
 WORKDIR /work
 
-RUN mkdir /app
+RUN mkdir /app && useradd -r -u 1000 -g 0 triton-mock -d /app/
 COPY --from=builder /build/target/release/triton-mock /app/
+
+USER triton-mock
 
 EXPOSE 8002 8003 8004 8005 8006 8007
 
