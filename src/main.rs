@@ -503,6 +503,10 @@ struct CliOptions {
     suffix: String,
 }
 
+fn recording_filename(suffix: &str) -> String {
+    format!("triton-mock-recording-{}.json.gz", suffix)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     use clap::Parser;
@@ -528,7 +532,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         GRPC_CLIENT.set(client_map).unwrap();
         recorded_streams
     } else {
-        let fname = format!("recorded_streams_{}.json.gz", cli_options.suffix);
+        let fname = recording_filename(&cli_options.suffix);
         let fin = std::fs::File::open(fname).unwrap();
         let fin_gz = flate2::read::GzDecoder::new(fin);
         serde_json::from_reader(fin_gz).unwrap()
@@ -558,7 +562,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     if cli_options.record {
         let recorded_streams = recorded_streams.lock().await;
-        let fname = format!("recorded_streams_{}.json.gz", cli_options.suffix);
+        let fname = recording_filename(&cli_options.suffix);
         let fout = std::fs::File::create(fname).unwrap();
         let fout_gz = flate2::write::GzEncoder::new(fout, flate2::Compression::default());
         serde_json::to_writer(fout_gz, &*recorded_streams).unwrap();
