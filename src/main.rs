@@ -9,7 +9,7 @@ use server::{
 };
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     error::Error,
     pin::Pin,
     sync::{Arc, OnceLock},
@@ -26,11 +26,11 @@ use tokio_stream::Stream;
 
 #[derive(serde::Deserialize, serde::Serialize, Default, Debug)]
 struct RecordedStream {
-    model_config: BTreeMap<String, Vec<String>>,
-    model_infer: BTreeMap<String, Vec<String>>,
-    model_stream_infer: BTreeMap<String, Vec<String>>,
+    model_config: BTreeMap<String, VecDeque<String>>,
+    model_infer: BTreeMap<String, VecDeque<String>>,
+    model_stream_infer: BTreeMap<String, VecDeque<String>>,
     #[serde(skip)]
-    model_stream_infer_inputs: Vec<String>,
+    model_stream_infer_inputs: VecDeque<String>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Default, Debug)]
@@ -164,8 +164,8 @@ impl GrpcInferenceService for MockInferenceService {
                         .get_mut(&name)
                         .unwrap()
                         .model_infer;
-                    let outputs = model_infer.entry(json).or_insert(vec![]);
-                    outputs.push(serde_json::to_string(&v).unwrap());
+                    let outputs = model_infer.entry(json).or_insert(VecDeque::new());
+                    outputs.push_back(serde_json::to_string(&v).unwrap());
                     tonic::Response::new(v)
                 })
                 .map_err(|e| {
@@ -180,9 +180,15 @@ impl GrpcInferenceService for MockInferenceService {
                 .get_mut(&name)
                 .unwrap()
                 .model_infer;
-            let json_resp = model_infer.entry(json).or_default().remove(0);
-            let resp: server::ModelInferResponse = serde_json::from_str(&json_resp).unwrap();
-            Ok(tonic::Response::new(resp))
+            let json_resp = model_infer.entry(json).or_default().pop_front();
+            if let Some(json_resp) = json_resp {
+                let resp: server::ModelInferResponse = serde_json::from_str(&json_resp).unwrap();
+                Ok(tonic::Response::new(resp))
+            } else {
+                Err(tonic::Status::unavailable(
+                    "model_infer: no recorded response",
+                ))
+            }
         }
     }
 
@@ -219,8 +225,8 @@ impl GrpcInferenceService for MockInferenceService {
                         .get_mut(&name)
                         .unwrap()
                         .model_config;
-                    let outputs = model_config.entry(json).or_insert(vec![]);
-                    outputs.push(serde_json::to_string(&v).unwrap());
+                    let outputs = model_config.entry(json).or_insert(VecDeque::new());
+                    outputs.push_back(serde_json::to_string(&v).unwrap());
                     tonic::Response::new(v)
                 })
                 .map_err(|e| {
@@ -235,9 +241,15 @@ impl GrpcInferenceService for MockInferenceService {
                 .get_mut(&name)
                 .unwrap()
                 .model_config;
-            let resp_json = model_config.entry(json).or_default().remove(0);
-            let resp: server::ModelConfigResponse = serde_json::from_str(&resp_json).unwrap();
-            Ok(tonic::Response::new(resp))
+            let resp_json = model_config.entry(json).or_default().pop_front();
+            if let Some(resp_json) = resp_json {
+                let resp: server::ModelConfigResponse = serde_json::from_str(&resp_json).unwrap();
+                Ok(tonic::Response::new(resp))
+            } else {
+                Err(tonic::Status::unavailable(
+                    "model_config: no recorded response",
+                ))
+            }
         }
     }
 
@@ -268,7 +280,7 @@ impl GrpcInferenceService for MockInferenceService {
                         .get_mut(&model_infer_request.model_name)
                         .unwrap();
                     let req_json = serde_json::to_string(&model_infer_request).unwrap();
-                    model_map.model_stream_infer_inputs.push(req_json);
+                    model_map.model_stream_infer_inputs.push_back(req_json);
                     tx.send(model_infer_request).await.unwrap();
                 }
             });
@@ -298,16 +310,24 @@ impl GrpcInferenceService for MockInferenceService {
                 while let Some(model_infer_resp) = resp_stream.message().await.unwrap() {
                     let mut recorded_streams = recorded_streams.lock().await;
                     let model_map = recorded_streams.model_map.get_mut(&model_name).unwrap();
-                    let req_json = model_map.model_stream_infer_inputs.remove(0);
-                    let json = serde_json::to_string(&model_infer_resp).unwrap();
-                    let outputs = &mut model_map
-                        .model_stream_infer
-                        .entry(req_json)
-                        .or_insert(vec![]);
-                    outputs.push(json);
-                    tx2.send(Ok::<_, tonic::Status>(model_infer_resp))
+                    let req_json = model_map.model_stream_infer_inputs.pop_front();
+                    if let Some(req_json) = req_json {
+                        let json = serde_json::to_string(&model_infer_resp).unwrap();
+                        let outputs = &mut model_map
+                            .model_stream_infer
+                            .entry(req_json)
+                            .or_insert(VecDeque::new());
+                        outputs.push_back(json);
+                        tx2.send(Ok::<_, tonic::Status>(model_infer_resp))
+                            .await
+                            .unwrap();
+                    } else {
+                        tx2.send(Err(tonic::Status::unavailable(
+                            "model_stream_infer: no recorded response",
+                        )))
                         .await
                         .unwrap();
+                    }
                 }
             });
         } else {
@@ -320,10 +340,18 @@ impl GrpcInferenceService for MockInferenceService {
                     let resp_json = model_map
                         .model_stream_infer
                         .get_mut(&req_json)
-                        .unwrap_or(&mut vec![])
-                        .remove(0);
-                    let resp = serde_json::from_str(&resp_json).unwrap();
-                    tx2.send(Ok::<_, tonic::Status>(resp)).await.unwrap();
+                        .unwrap_or(&mut VecDeque::new())
+                        .pop_front();
+                    if let Some(resp_json) = resp_json {
+                        let resp = serde_json::from_str(&resp_json).unwrap();
+                        tx2.send(Ok::<_, tonic::Status>(resp)).await.unwrap();
+                    } else {
+                        tx2.send(Err(tonic::Status::unavailable(
+                            "model_stream_infer: no recorded response",
+                        )))
+                        .await
+                        .unwrap();
+                    }
                 }
             });
         }
