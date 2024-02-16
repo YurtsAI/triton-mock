@@ -1,12 +1,16 @@
 FROM rust:1.75 AS builder
 
-WORKDIR /build
-COPY . /build
+ARG PROTOBUF_VERSION=3.21.12-3
+ARG LIBPROTOBUF_VERSION=3.21.12-3
 
 RUN apt-get update \
   && apt-get install --no-install-recommends -y \
-  protobuf-compiler=3.21.12-3 libprotobuf-dev=3.21.12-3 \
-  && cargo build --release
+  protobuf-compiler=${PROTOBUF_VERSION} libprotobuf-dev=${LIBPROTOBUF_VERSION}
+
+WORKDIR /build
+COPY . /build
+
+RUN cargo build --release
 
 FROM debian:bookworm-slim
 

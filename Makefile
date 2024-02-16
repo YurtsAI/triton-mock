@@ -14,21 +14,19 @@ docker-push:
 	docker push $(DOCKER_IMAGE)
 
 docker-run:
-	docker run \
+	docker run $(DETACH) \
 		--name $(APP_NAME) \
 		--env RUST_LOG=debug \
-		--publish 8002:8002 \
-		--publish 8003:8003 \
-		--publish 8004:8004 \
-		--publish 8005:8005 \
-		--publish 8006:8006 \
-		--publish 8007:8007 \
+		--publish 8002-8007:8002-8007 \
 		--rm \
 		--interactive \
 		--tty \
 		--volume $(PWD):/work \
 		$(DOCKER_IMAGE) \
 		$(ARGS)
+
+docker-start: DETACH=--detach
+docker-start: docker-run
 
 docker-stop:
 	docker stop \
