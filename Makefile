@@ -43,3 +43,6 @@ wiremock-grpc-protos:
 
 install-deps:
 	brew install protobuf
+
+release:
+	cargo release patch $(EXECUTRE)
