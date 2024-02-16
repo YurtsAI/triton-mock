@@ -1,4 +1,5 @@
 mod server {
+    #![allow(clippy::all)]
     tonic::include_proto!("inference");
 }
 
@@ -497,7 +498,7 @@ impl GrpcInferenceService for MockInferenceService {
 #[derive(clap::Parser, Debug)]
 struct CliOptions {
     #[clap(long)]
-    replay: bool,
+    record: bool,
     #[clap(long, default_value = "0")]
     suffix: String,
 }
@@ -512,7 +513,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut client_map = ClientMap::new();
     let cli_options = CliOptions::parse();
 
-    let recorded_streams = if !cli_options.replay {
+    let recorded_streams = if cli_options.record {
         let mut recorded_streams = RecordedStreams::default();
         for (models, port) in CLIENT_PORTS {
             for model in *models {
@@ -555,7 +556,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     join_set.abort_all();
 
-    if !cli_options.replay {
+    if cli_options.record {
         let recorded_streams = recorded_streams.lock().await;
         let json = serde_json::to_string(&*recorded_streams).unwrap();
         std::fs::write(
