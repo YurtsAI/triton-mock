@@ -527,6 +527,8 @@ impl GrpcInferenceService for MockInferenceService {
 struct CliOptions {
     #[clap(long)]
     record: bool,
+    #[clap(long, default_value = "host.docker.internal")]
+    remote_host: String,
     #[clap(long, default_value = "0")]
     suffix: String,
 }
@@ -554,7 +556,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let mut recorded_streams = RecordedStreams::default();
         for (models, port) in CLIENT_PORTS {
             for model in *models {
-                let address = format!("http://0.0.0.0:{}", port);
+                let address = format!("http://{}:{}", cli_options.remote_host, port);
                 let client = Mutex::new(GrpcInferenceServiceClient::connect(address).await?);
                 client_map.insert(model.to_string(), client);
                 recorded_streams
