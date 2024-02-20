@@ -27,7 +27,7 @@ use tokio_stream::Stream;
 #[derive(serde::Deserialize, serde::Serialize, Default, Debug)]
 struct RecordedStream {
     model_config: BTreeMap<String, VecDeque<String>>,
-    model_infer: BTreeMap<String, VecDeque<String>>,
+    model_infer: VecDeque<String>,
     model_stream_infer: BTreeMap<String, VecDeque<String>>,
     #[serde(skip)]
     model_stream_infer_inputs: VecDeque<String>,
@@ -149,7 +149,6 @@ impl GrpcInferenceService for MockInferenceService {
             )));
         }
         let request = request.into_inner();
-        let json = serde_json::to_string(&request).unwrap();
         let mut recorded_stream = self.recorded_streams.lock().await;
         let client_map = GRPC_CLIENT.get();
         if let Some(client_map) = client_map {
@@ -164,8 +163,7 @@ impl GrpcInferenceService for MockInferenceService {
                         .get_mut(&name)
                         .unwrap()
                         .model_infer;
-                    let outputs = model_infer.entry(json).or_insert(VecDeque::new());
-                    outputs.push_back(serde_json::to_string(&v).unwrap());
+                    model_infer.push_back(serde_json::to_string(&v).unwrap());
                     tonic::Response::new(v)
                 })
                 .map_err(|e| {
@@ -180,7 +178,7 @@ impl GrpcInferenceService for MockInferenceService {
                 .get_mut(&name)
                 .unwrap()
                 .model_infer;
-            let json_resp = model_infer.entry(json).or_default().pop_front();
+            let json_resp = model_infer.pop_front();
             if let Some(json_resp) = json_resp {
                 let resp: server::ModelInferResponse = serde_json::from_str(&json_resp).unwrap();
                 Ok(tonic::Response::new(resp))
