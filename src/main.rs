@@ -28,7 +28,7 @@ use tokio_stream::Stream;
 struct RecordedStream {
     model_config: BTreeMap<String, VecDeque<String>>,
     model_infer: VecDeque<String>,
-    model_stream_infer: BTreeMap<String, VecDeque<String>>,
+    model_stream_infer: VecDeque<String>,
     #[serde(skip)]
     model_stream_infer_inputs: VecDeque<String>,
 }
@@ -309,12 +309,14 @@ impl GrpcInferenceService for MockInferenceService {
                     let mut recorded_streams = recorded_streams.lock().await;
                     let model_map = recorded_streams.model_map.get_mut(&model_name).unwrap();
                     let req_json = model_map.model_stream_infer_inputs.pop_front();
-                    if let Some(req_json) = req_json {
+                    if let Some(_req_json) = req_json {
                         let json = serde_json::to_string(&model_infer_resp).unwrap();
-                        let outputs = &mut model_map
+                        let outputs = &mut model_map.model_stream_infer;
+                        /*
                             .model_stream_infer
                             .entry(req_json)
                             .or_insert(VecDeque::new());
+                        */
                         outputs.push_back(json);
                         tx2.send(Ok::<_, tonic::Status>(model_infer_resp))
                             .await
@@ -331,14 +333,16 @@ impl GrpcInferenceService for MockInferenceService {
         } else {
             tokio::spawn(async move {
                 let recorded_streams: Arc<Mutex<RecordedStreams>> = recs_rx.await.unwrap();
-                while let Some(model_infer_req) = rx.recv().await {
+                while let Some(_model_infer_req) = rx.recv().await {
                     let mut recorded_streams = recorded_streams.lock().await;
                     let model_map = recorded_streams.model_map.get_mut(&model_name).unwrap();
-                    let req_json = serde_json::to_string(&model_infer_req).unwrap();
+                    //let req_json = serde_json::to_string(&model_infer_req).unwrap();
                     let resp_json = model_map
                         .model_stream_infer
+                        /*
                         .get_mut(&req_json)
                         .unwrap_or(&mut VecDeque::new())
+                        */
                         .pop_front();
                     if let Some(resp_json) = resp_json {
                         let resp = serde_json::from_str(&resp_json).unwrap();
