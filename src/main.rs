@@ -83,6 +83,7 @@ const MODELS: &[&str] = &[
     "coreference_resolution",
     "cross_encoder",
     "llama_7b",
+    "mistral_7b_instruct",
 ];
 
 static GRPC_CLIENT: OnceLock<ClientMap> = OnceLock::new();
