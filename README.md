@@ -1,5 +1,7 @@
 # triton-mock
 
+## Overview
+
 A mock server for a Triton Inference Server.  It operates in two modes:
 
 1. Replay mode:  In this mode, the mock server replays the requests it has seen before.
@@ -20,4 +22,18 @@ These recordings can be replayed using:
 
 ```bash
 RUST_LOG=debug cargo run --release -- --remote-host 0.0.0.0
+```
+
+## Releasing
+
+To release, use the makefile targets:
+
+```bash
+make release RELEASE=patch EXECUTE=y
+```
+
+Publishing a new docker image is done manually:
+
+```bash
+make docker-build docker-publish
 ```
