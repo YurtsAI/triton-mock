@@ -1,13 +1,14 @@
 ARG BLD_IMAGE=rust:1.75
 ARG RUN_IMAGE=gcr.io/distroless/base-debian12
 ARG BUSYBOX_IMAGE=busybox:1.35.0-uclibc
-ARG TARGET_TRIPLET=x86_64-linux-gnu
 
 FROM ${BUSYBOX_IMAGE} AS busybox-tools
 
 ## === PRE-FLIGHT ===
 
 FROM ${RUN_IMAGE} AS preflight
+
+ARG TARGET_TRIPLET=x86_64-linux-gnu
 
 WORKDIR /preflight
 
