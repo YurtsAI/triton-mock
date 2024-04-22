@@ -26,4 +26,4 @@ RUST_LOG=debug cargo run --release -- --remote-host 0.0.0.0
 
 ## Releasing
 
-See [`BUILDING.md`](./BUILDING.md)
+See [`PUBLISHING.md`](./PUBLISHING.md)
