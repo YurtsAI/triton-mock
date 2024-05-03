@@ -8,6 +8,7 @@ github-token-scope:
 
 docker-build:
 	docker build -t $(DOCKER_IMAGE) .
+	docker tag $(DOCKER_IMAGE) $(APP_NAME):latest
 
 docker-push:
 	gh auth token | docker login ghcr.io --username github --password-stdin
