@@ -566,8 +566,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
             for model in *models {
                 let address = format!("http://{}:{}", cli_options.remote_host, port);
                 log::info!("Connecting to remote gRPC endpoint: {address}");
-                let client = Mutex::new(GrpcInferenceServiceClient::connect(address).await?);
-                client_map.insert(model.to_string(), client);
+                let client = GrpcInferenceServiceClient::connect(address.clone()).await;
+                if let Ok(client) = client {
+                    client_map.insert(model.to_string(), Mutex::new(client));
+                } else {
+                    log::warn!("Failed to connect to remote gRPC endpoint: {address}");
+                    continue;
+                }
                 recorded_streams
                     .model_map
                     .insert(model.to_string(), RecordedStream::default());
