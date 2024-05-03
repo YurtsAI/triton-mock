@@ -55,23 +55,28 @@ impl MockInferenceService {
 }
 
 const CLIENT_PORTS: &[(&[&str], &str)] = &[
-    (
-        &[
-            "acronym_detector",
-            "document_classifier",
-            "sentence_embed",
-            "ner",
-        ],
-        "8302",
-    ),
-    (&["ingestor"], "8303"),
+    /*
+        (
+            &[
+                "acronym_detector",
+                "document_classifier",
+                "sentence_embed",
+                "ner",
+            ],
+            "8302",
+        ),
+        (&["ingestor"], "8303"),
+    */
     (&["cross_encoder", "coreference_resolution"], "8304"),
     (&["llama_7b"], "8305"),
-    (&["keybert", "ingestor_vllm"], "8306"),
+    /*
+        (&["keybert", "ingestor_vllm"], "8306"),
+    */
     (&["mistral_7b_instruct"], "8307"),
 ];
 
-const SERVER_PORTS: &[&str] = &["8002", "8003", "8004", "8005", "8006", "8007"];
+//const SERVER_PORTS: &[&str] = &["8002", "8003", "8004", "8005", "8006", "8007"];
+const SERVER_PORTS: &[&str] = &["8004", "8005", "8007"];
 
 const MODELS: &[&str] = &[
     "acronym_detector",
