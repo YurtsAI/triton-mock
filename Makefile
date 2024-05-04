@@ -7,6 +7,9 @@ github-token-scope:
 	gh auth refresh -s write:packages
 
 docker-build:
+	docker run --rm -v $(PWD):/work -w /work cgr.dev/chainguard/apko \
+		build triton-mock-base.yaml triton-mock-base:latest triton-mock-base.tar
+	docker load -i triton-mock-base.tar
 	docker build -t $(DOCKER_IMAGE) .
 	docker tag $(DOCKER_IMAGE) $(APP_NAME):latest
 

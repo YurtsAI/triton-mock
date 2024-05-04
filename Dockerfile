@@ -1,75 +1,36 @@
-ARG BLD_IMAGE=rust:1.75
-ARG RUN_IMAGE=gcr.io/distroless/base-debian12
-ARG BUSYBOX_IMAGE=busybox:1.35.0-uclibc
+ARG BLD_IMAGE=cgr.dev/chainguard/rust
+ARG BLD_IMAGE_TAG=latest-dev
 
-FROM ${BUSYBOX_IMAGE} AS busybox-tools
-
-## === PRE-FLIGHT ===
-
-FROM ${RUN_IMAGE} AS preflight
-
-ARG TARGET_TRIPLET=x86_64-linux-gnu
-
-WORKDIR /preflight
-
-COPY --from=busybox-tools \
-  /bin/sh /bin/find /bin/tail \
-  /bin/
-
-## Gather a list of libs that exist in the runtime image
-RUN find /lib/${TARGET_TRIPLET}/ | tail -n +2 >manifest-exclusions.txt
+ARG RUN_IMAGE=triton-mock-base
+ARG RUN_IMAGE_TAG=latest-amd64
 
 ## === BUILD IMAGE ===
 
-FROM ${BLD_IMAGE} AS builder
+FROM ${BLD_IMAGE}:${BLD_IMAGE_TAG} AS builder
 
-ARG BIN_NAME=triton-mock
-ARG PROTOBUF_VERSION=3.21.12-3
-ARG LIBPROTOBUF_VERSION=3.21.12-3
+ARG PROTOBUF_VERSION=3.25.3-r0
 
-LABEL org.opencontainers.image.source https://github.com/YurtsAI/${BIN_NAME}
+USER root
 
-RUN apt-get update \
-  && apt-get install --no-install-recommends -y \
-  protobuf-compiler=${PROTOBUF_VERSION} libprotobuf-dev=${LIBPROTOBUF_VERSION}
+RUN apk add --no-cache \
+  protobuf=${PROTOBUF_VERSION} \
+  protobuf-dev=${PROTOBUF_VERSION}
+
+USER nonroot
 
 WORKDIR /build
 COPY . /build
 
-COPY --from=preflight /preflight/manifest-exclusions.txt .
-
-RUN cargo build --release \
-  && mkdir libs \
-  && ldd target/release/${BIN_NAME} \
-  | grep --invert-match --fixed-strings --file=manifest-exclusions.txt \
-  | grep --fixed-strings '=>' \
-  | sed -e 's@.* => \(.*\) .*@\1@' \
-  | xargs --replace={} cp -v {} libs/
+RUN cargo build --release && strip target/release/triton-mock
 
 ## === RUNTIME IMAGE ===
 
-FROM ${RUN_IMAGE}
+FROM ${RUN_IMAGE}:${RUN_IMAGE_TAG}
 
-ARG BIN_NAME=triton-mock
-ARG TARGET_TRIPLET=x86_64-linux-gnu
+LABEL org.opencontainers.image.source https://github.com/YurtsAI/triton-mock
 
-WORKDIR /work
+COPY --from=builder /build/target/release/triton-mock /app/
 
-COPY --from=busybox-tools \
-  /bin/sh /bin/ls /bin/rm /bin/addgroup /bin/adduser /bin/chown /bin/mkdir \
-  /bin/
-
-# create a non-root user
-RUN addgroup --system --gid 1000 ${BIN_NAME} \
-  && adduser --system --uid 1000 --ingroup ${BIN_NAME} ${BIN_NAME} \
-  && chown 1000:1000 /work \
-  && rm /bin/sh /bin/ls /bin/rm /bin/addgroup /bin/adduser /bin/chown /bin/mkdir
-
-COPY --from=builder /build/target/release/${BIN_NAME} /app/
-COPY --from=builder /build/libs/* /lib/${TARGET_TRIPLET}/
-
-USER ${BIN_NAME}
-
-EXPOSE 8002 8003 8004 8005 8006 8007
+EXPOSE 8005 8007
 
 ENTRYPOINT ["/app/triton-mock"]
