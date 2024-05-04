@@ -1,0 +1,33 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - glibc
+    - libgcc
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1000
+  users:
+    - username: nonroot
+      uid: 1000
+  run-as: nonroot
+
+os-release:
+  id: wolfi
+
+work-dir: /work
+
+paths:
+  - path: /work
+    type: directory
+    permissions: 0o700
+    uid: 1000
+    gid: 1000
+
+archs:
+  - x86_64
