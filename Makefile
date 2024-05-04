@@ -37,7 +37,7 @@ docker-stop:
 		$(shell docker ps -q --filter "name=$(APP_NAME)") \
 		--signal SIGINT
 
-wiremock-grpc-protos:
+sync-grpc-protos:
 	curl -v -sSL https://raw.githubusercontent.com/triton-inference-server/common/main/protobuf/grpc_service.proto \
 		>protos/grpc_service.proto
 	curl -v -sSL https://raw.githubusercontent.com/triton-inference-server/common/main/protobuf/health.proto \
